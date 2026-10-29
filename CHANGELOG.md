@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-29
+
+### Fixed
+
+- Fractional multipliers no longer stall or drift. `Backoff` grew each delay from the previous delay truncated to whole nanoseconds, so a 1 ns delay with multiplier 1.5 stayed at 1 ns forever and long sequences lost up to 1 ns per step. It now grows the unrounded delay.
+- The documented delay formula was wrong when both `multiplier` and `increment` are set. The docs now describe the real rule: each delay is the previous one times `multiplier`, plus `increment`.
+
+### Changed
+
+- The docs now warn that `.Decorrelated` with `initial = 0` always gives 0, that `budget_timeout` returns 0 for a spent budget, and that a shared breaker can count a late result as a trial result.
+
 ## [0.1.0] - 2026-10-29
 
 ### Added
@@ -23,5 +34,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Error` union of `Policy_Error`, `Retry_Error`, `Breaker_Error` and `Budget_Error`.
 - `basic` and `resilient` examples.
 
-[Unreleased]: https://github.com/alexisbcz/odin-retry/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/alexisbcz/odin-retry/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/alexisbcz/odin-retry/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alexisbcz/odin-retry/releases/tag/v0.1.0
