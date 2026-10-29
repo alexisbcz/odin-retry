@@ -312,3 +312,131 @@ test_errors_print_as_messages :: proc(t: ^testing.T) {
 	s = fmt.tprint(perr(.Max_Below_Initial))
 	testing.expect_value(t, s, "Max_Below_Initial")
 }
+
+@(test)
+test_run_with_breaker_opens_and_fails_fast :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 3
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+
+	s := Script{}
+	attempts, err := retry.run(retry.constant(MS, 10), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, rerr(.Circuit_Open))
+	testing.expect_value(t, attempts, 3)
+	testing.expect_value(t, fc.sleeps, 2) // No sleep after the breaker opens.
+	testing.expect_value(t, retry.breaker_state(&cb), retry.Breaker_State.Open)
+
+	// A second run fails fast without calling the operation.
+	s2 := Script{succeed_on = 1}
+	attempts, err = retry.run(retry.constant(MS, 10), scripted, &s2, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, rerr(.Circuit_Open))
+	testing.expect_value(t, attempts, 0)
+	testing.expect_value(t, s2.calls, 0)
+}
+
+@(test)
+test_run_with_breaker_recovers_after_timeout :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 1
+	c.open_timeout = time.Second
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+	retry.breaker_trip(&cb)
+	retry.fake_clock_advance(&fc, time.Second)
+
+	s := Script{succeed_on = 1}
+	attempts, err := retry.run(retry.constant(MS), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, attempts, 1)
+	testing.expect_value(t, retry.breaker_state(&cb), retry.Breaker_State.Closed)
+}
+
+@(test)
+test_run_permanent_failure_does_not_trip_breaker :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 1
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+	s := Script{permanent_on = 1}
+	_, err := retry.run(retry.constant(MS), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, rerr(.Permanent_Failure))
+	testing.expect_value(t, retry.breaker_state(&cb), retry.Breaker_State.Closed)
+}
+
+@(test)
+test_run_stops_before_sleeping_past_budget :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	budget: retry.Budget
+	_ = retry.budget_init(&budget, 250 * MS, retry.fake_clock(&fc))
+	s := Script{}
+	attempts, err := retry.run(retry.constant(100 * MS, 0), scripted, &s, {clock = retry.fake_clock(&fc), budget = &budget})
+	testing.expect_value(t, err, rerr(.Budget_Exhausted))
+	// Sleeps at 0 -> 100 and 100 -> 200 fit; a third would end at 300 ms.
+	testing.expect_value(t, attempts, 3)
+	testing.expect_value(t, fc.now, 200 * MS)
+}
+
+@(test)
+test_run_with_spent_budget_never_calls_operation :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	budget: retry.Budget
+	_ = retry.budget_init(&budget, 0, retry.fake_clock(&fc))
+	s := Script{succeed_on = 1}
+	attempts, err := retry.run(retry.constant(MS), scripted, &s, {clock = retry.fake_clock(&fc), budget = &budget})
+	testing.expect_value(t, err, rerr(.Budget_Exhausted))
+	testing.expect_value(t, attempts, 0)
+	testing.expect_value(t, s.calls, 0)
+}
+
+@(test)
+test_run_budget_counts_operation_time :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	budget: retry.Budget
+	_ = retry.budget_init(&budget, time.Second, retry.fake_clock(&fc))
+	s := Script{clock = &fc, work = 600 * MS}
+	attempts, err := retry.run(retry.constant(MS, 0), scripted, &s, {clock = retry.fake_clock(&fc), budget = &budget})
+	testing.expect_value(t, err, rerr(.Budget_Exhausted))
+	testing.expect_value(t, attempts, 2)
+}
+
+@(test)
+test_run_typed_accepts_breaker_and_budget :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	_ = retry.breaker_init(&cb, retry.default_breaker_config(), retry.fake_clock(&fc))
+	budget: retry.Budget
+	_ = retry.budget_init(&budget, time.Minute, retry.fake_clock(&fc))
+	job: Job
+	attempts, err := retry.run_typed(
+		retry.constant(MS, 0),
+		job_op,
+		&job,
+		clock = retry.fake_clock(&fc),
+		breaker = &cb,
+		budget = &budget,
+	)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, attempts, 3)
+	testing.expect_value(t, retry.breaker_state(&cb), retry.Breaker_State.Closed)
+}
+
+Classified :: struct {
+	errors: []Net_Error,
+}
+
+classified_op :: proc(c: ^Classified, attempt: int) -> retry.Retry_Decision {
+	return retry.classify(c.errors[attempt - 1], TRANSIENT)
+}
+
+@(test)
+test_run_with_classify_stops_on_fatal_error :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	c := Classified{[]Net_Error{.Timeout, .Connection_Reset, .Not_Found, .None}}
+	attempts, err := retry.run_typed(retry.constant(MS, 0), classified_op, &c, clock = retry.fake_clock(&fc))
+	testing.expect_value(t, err, rerr(.Permanent_Failure))
+	testing.expect_value(t, attempts, 3)
+}
