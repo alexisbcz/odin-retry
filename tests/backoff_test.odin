@@ -438,3 +438,28 @@ test_short_aliases_match_long_names :: proc(t: ^testing.T) {
 	d, _ = retry.next(&b)
 	testing.expect_value(t, d, MS)
 }
+
+@(test)
+test_tiny_initial_still_grows :: proc(t: ^testing.T) {
+	// 1 ns * 1.5 truncates back to 1 ns; the delay must still grow over time.
+	p := retry.Policy{initial = 1, multiplier = 1.5}
+	expect_delays(t, p, {1, 1, 2, 3, 5, 7, 11, 17})
+}
+
+@(test)
+test_long_fractional_sequence_does_not_drift :: proc(t: ^testing.T) {
+	// 100 ms * 1.5^15 = 43_789_389_038.0859375 ns. Truncating at every step
+	// used to lose a nanosecond per step and compound the error.
+	p := retry.Policy{initial = 100 * MS, multiplier = 1.5}
+	b: retry.Backoff
+	testing.expect_value(t, retry.backoff_init(&b, p), nil)
+	got: [16]time.Duration
+	testing.expect_value(t, take(&b, got[:]), 16)
+	testing.expect_value(t, got[15], time.Duration(43_789_389_038))
+}
+
+@(test)
+test_fractional_growth_respects_cap :: proc(t: ^testing.T) {
+	p := retry.Policy{initial = 1, multiplier = 1.5, max = 4}
+	expect_delays(t, p, {1, 1, 2, 3, 4, 4, 4})
+}
