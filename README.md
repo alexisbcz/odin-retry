@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Odin](https://img.shields.io/badge/Odin-dev--2026--09-1e5a99.svg)](https://odin-lang.org)
 
-Retry network and IO calls with constant, linear or exponential backoff and jitter, in the spirit of Go's `cenkalti/backoff`. You can inject the clock and the random generator, so tests run instantly and give the same result every time.
+Retry and resilience for Odin: constant, linear or exponential backoff with full, equal or decorrelated jitter, limits on attempts and elapsed time, retryable error classification, a circuit breaker and timeout budgets. It covers the ground of Go's `cenkalti/backoff` and `sony/gobreaker`. You can inject the clock and the random generator, so tests run instantly and give the same result every time.
 
 ## Install
 
@@ -87,6 +87,80 @@ The jitter modes follow the AWS Architecture Blog post "Exponential Backoff And 
 
 `max_attempts` counts every attempt, the first one included. `max_elapsed` stops before a delay that would end after that much time since the start, so a run never sleeps past its deadline.
 
+## Classifying errors
+
+Most operations return an error value, not a decision. The `classify` helpers map the zero value to `.Success` and sort every other value into `.Retry` or `.Permanent`:
+
+```odin
+Fetch_Error :: enum {
+	None,
+	Timeout,
+	Unavailable,
+	Not_Found,
+}
+
+TRANSIENT :: []Fetch_Error{.Timeout, .Unavailable}
+
+FATAL :: []Fetch_Error{.Not_Found}
+
+is_transient_errno :: proc(code: i32) -> bool {
+	return code == 4 || code == 35 // EINTR or EAGAIN on macOS
+}
+
+main :: proc() {
+	fmt.println(retry.classify(Fetch_Error.Timeout, TRANSIENT))    // Retry
+	fmt.println(retry.classify(Fetch_Error.Not_Found, TRANSIENT))  // Permanent
+	fmt.println(retry.classify_except(Fetch_Error.Timeout, FATAL)) // Retry
+	fmt.println(retry.classify_proc(i32(35), is_transient_errno))  // Retry
+}
+```
+
+## Circuit breaker
+
+A `Circuit_Breaker` stops calling a dependency that keeps failing, so callers fail fast and the dependency gets time to recover.
+
+| State | Calls | Moves to |
+| --- | --- | --- |
+| `.Closed` | All allowed | `.Open` after `failure_threshold` consecutive failures |
+| `.Open` | All rejected | `.Half_Open` once `open_timeout` has passed |
+| `.Half_Open` | Up to `half_open_max` trial calls | `.Closed` after `success_threshold` successes, `.Open` on any failure |
+
+Set `Options.breaker`, or the `breaker` parameter of `run_typed`, and `run` asks the breaker before each attempt and reports each outcome. It returns `.Circuit_Open` as soon as the breaker rejects a call. A `.Permanent` result counts as a success for the breaker, because the dependency answered.
+
+```odin
+config := retry.default_breaker_config()
+config.failure_threshold = 3
+config.open_timeout = 5 * time.Second
+
+cb: retry.Circuit_Breaker
+if err := retry.breaker_init(&cb, config); err != nil {
+	return
+}
+attempts, err := retry.run_typed(policy, fetch, &service, breaker = &cb)
+if err == retry.Error(retry.Retry_Error.Circuit_Open) {
+	fmt.println("service down, retry in", retry.breaker_retry_after(&cb))
+}
+```
+
+Outside `run`, call `breaker_allow` before each call and `breaker_record_success` or `breaker_record_failure` after it. `breaker_trip` opens the breaker by hand, `breaker_reset` closes it, and `on_state_change` reports every transition. A breaker holds a mutex, so threads can share it.
+
+## Timeout budgets
+
+A `Budget` caps the total time one request may spend, across attempts, sleeps and nested calls. Give each attempt `budget_timeout(budget, per_attempt)` as its timeout, and pass the budget to `run` so that it never sleeps past the end:
+
+```odin
+budget: retry.Budget
+_ = retry.budget_init(&budget, 2 * time.Second)
+
+// Inside the operation: at most 200 ms, less when the budget runs low.
+timeout := retry.budget_timeout(budget, 200 * time.Millisecond)
+
+attempts, err := retry.run_typed(policy, fetch, &service, budget = &budget)
+// err is .Budget_Exhausted when the time ran out.
+```
+
+`budget_child(parent, total)` gives a sub-call its own budget that never outlives the parent. The zero `Budget` has no limit.
+
 ## Driving the loop yourself
 
 `Backoff` is the iterator behind `run`. Use it when you can't block, for example in an event loop:
@@ -137,14 +211,21 @@ attempts, err := retry.run(policy, op, user, {
 | `Options` | Clock, generator and `on_retry` callback for `run` | No | Not needed |
 | `Clock`, `system_clock`, `clock_now`, `clock_sleep` | Injectable time source | No | Not needed |
 | `Fake_Clock`, `fake_clock`, `fake_clock_advance` | Clock for tests that never blocks | No | Not needed |
-| `Error` | Union of `Policy_Error` and `Retry_Error` | No | Not needed |
+| `classify`, `classify_except`, `classify_proc` | Map an error value to a `Retry_Decision` | No | Not needed |
+| `Circuit_Breaker`, `Breaker_Config`, `default_breaker_config` | Fail fast while a dependency is down | No | Not needed |
+| `breaker_init`, `breaker_allow`, `breaker_record_success`, `breaker_record_failure` | Drive a breaker by hand | No | Not needed |
+| `breaker_state`, `breaker_retry_after`, `breaker_trip`, `breaker_reset` | Inspect or force the breaker state | No | Not needed |
+| `Budget`, `budget_init`, `budget_child` | Cap the total time of a request | No | Not needed |
+| `budget_remaining`, `budget_elapsed`, `budget_expired`, `budget_timeout` | Read what is left of a budget | No | Not needed |
+| `Error` | Union of `Policy_Error`, `Retry_Error`, `Breaker_Error` and `Budget_Error` | No | Not needed |
 
 ## Examples
 
 Each directory under `examples/` is a runnable program:
 
 ```sh
-odin run examples/basic
+odin run examples/basic      # exponential backoff and the Backoff iterator
+odin run examples/resilient  # classification, circuit breaker and budget
 ```
 
 ## Design notes
@@ -153,7 +234,7 @@ odin run examples/basic
 - Fallible procedures return `Error`. The library never panics on bad input: invalid policies, nil operations and unknown decisions all come back as error values.
 - Delay arithmetic saturates at the cap, or at the largest `time.Duration` when there is no cap, instead of overflowing.
 - The runner uses the name `run` because `do` is a keyword in Odin.
-- The package keeps no global mutable state. A `Backoff` or `Fake_Clock` is safe to use from one thread at a time.
+- The package keeps no global mutable state. A `Backoff`, `Budget` or `Fake_Clock` is safe to use from one thread at a time. A `Circuit_Breaker` locks an internal mutex, so threads can share it, but don't copy it after `breaker_init`.
 
 ## Testing
 

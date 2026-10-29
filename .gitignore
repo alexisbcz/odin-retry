@@ -9,6 +9,7 @@
 
 # Odin writes the executable next to where you ran it
 /basic
+/resilient
 /tests.bin
 /retry
 /odin-retry

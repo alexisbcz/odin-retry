@@ -80,3 +80,9 @@ XCTest
 [Bb]ackoff(s)?
 [Ii]njectable
 [Ss]eedable
+[Ss]ubcall(s)?
+gobreaker
+cenkalti
+[Dd]ecorrelated
+[Rr]etryable
+[Mm]utex(es)?
