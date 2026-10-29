@@ -33,8 +33,10 @@ Options :: struct {
 	/*
 	breaker, when set, is asked before each attempt and told the outcome after
 	it. `.Retry` and an invalid decision count as failures; `.Success` and
-	`.Permanent` count as successes, because the dependency answered. The
-	breaker must outlive the call.
+	`.Permanent` count as successes, because the dependency answered. When a
+	failure opens the breaker, run returns `.Circuit_Open` at once unless the
+	next delay lasts at least until the breaker half-opens; then it sleeps and
+	the next attempt is a trial call. The breaker must outlive the call.
 	*/
 	breaker:  ^Circuit_Breaker,
 	// budget, when set, stops the run once it is spent and before any sleep that would spend it. It must outlive the call.
@@ -158,10 +160,6 @@ run_loop :: proc(
 		case .Retry:
 			if breaker != nil {
 				breaker_record_failure(breaker)
-				// Fail fast: sleeping only to be rejected would waste the delay.
-				if breaker_state(breaker) == .Open {
-					return attempts, .Circuit_Open
-				}
 			}
 		case:
 			if breaker != nil {
@@ -171,6 +169,14 @@ run_loop :: proc(
 		}
 
 		delay, ok := backoff_next(&b)
+		if breaker != nil {
+			// Fail fast when the breaker is open and would still reject the next
+			// attempt after the delay. When the delay outlasts the open timeout,
+			// sleep instead: the next attempt then runs as a half-open trial.
+			if wait := breaker_retry_after(breaker); wait > 0 && (!ok || wait > delay) {
+				return attempts, .Circuit_Open
+			}
+		}
 		if !ok {
 			return attempts, b.stop
 		}
