@@ -127,7 +127,7 @@ A `Circuit_Breaker` stops calling a dependency that keeps failing, so callers fa
 | `.Open` | All rejected | `.Half_Open` once `open_timeout` has passed |
 | `.Half_Open` | Up to `half_open_max` trial calls | `.Closed` after `success_threshold` successes, `.Open` on any failure |
 
-Set `Options.breaker`, or the `breaker` parameter of `run_typed`, and `run` asks the breaker before each attempt and reports each outcome. It returns `.Circuit_Open` as soon as the breaker rejects a call. A `.Permanent` result counts as a success for the breaker, because the dependency answered.
+Set `Options.breaker`, or the `breaker` parameter of `run_typed`, and `run` asks the breaker before each attempt and reports each outcome. It returns `.Circuit_Open` as soon as the breaker rejects a call, or as soon as a failure opens the breaker and the next delay ends before the breaker would let a trial call through. When the delay outlasts `open_timeout`, `run` sleeps and makes the next attempt a trial call. A `.Permanent` result counts as a success for the breaker, because the dependency answered.
 
 ```odin
 config := retry.default_breaker_config()

@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-29
+
+### Fixed
+
+- `run` no longer gives up with `.Circuit_Open` when a failure opens the breaker but the next delay outlasts `open_timeout`. It now sleeps, and the next attempt runs as a half-open trial call. It still fails fast when the breaker would reject that attempt.
+
 ## [0.1.1] - 2026-10-29
 
 ### Fixed
@@ -34,6 +40,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `Error` union of `Policy_Error`, `Retry_Error`, `Breaker_Error` and `Budget_Error`.
 - `basic` and `resilient` examples.
 
-[Unreleased]: https://github.com/alexisbcz/odin-retry/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/alexisbcz/odin-retry/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/alexisbcz/odin-retry/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/alexisbcz/odin-retry/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/alexisbcz/odin-retry/releases/tag/v0.1.0
