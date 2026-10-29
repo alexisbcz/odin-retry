@@ -337,6 +337,56 @@ test_run_with_breaker_opens_and_fails_fast :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_run_waits_out_a_short_open_timeout :: proc(t: ^testing.T) {
+	// The breaker opens after attempt 2, but the 2 s delay outlasts its 1 s
+	// open timeout, so attempt 3 runs as a half-open trial instead of failing fast.
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 2
+	c.open_timeout = time.Second
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+
+	s := Script{succeed_on = 3}
+	attempts, err := retry.run(retry.constant(2 * time.Second, 5), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, attempts, 3)
+	testing.expect_value(t, fc.sleeps, 2)
+	testing.expect_value(t, retry.breaker_state(&cb), retry.Breaker_State.Closed)
+}
+
+@(test)
+test_run_fails_fast_when_delay_ends_before_breaker_half_opens :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 2
+	c.open_timeout = time.Second
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+
+	s := Script{succeed_on = 3}
+	attempts, err := retry.run(retry.constant(999 * MS, 5), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, rerr(.Circuit_Open))
+	testing.expect_value(t, attempts, 2)
+	testing.expect_value(t, fc.sleeps, 1)
+}
+
+@(test)
+test_run_reports_circuit_open_when_attempts_run_out_as_it_opens :: proc(t: ^testing.T) {
+	fc: retry.Fake_Clock
+	cb: retry.Circuit_Breaker
+	c := retry.default_breaker_config()
+	c.failure_threshold = 2
+	c.open_timeout = time.Second
+	_ = retry.breaker_init(&cb, c, retry.fake_clock(&fc))
+
+	s := Script{}
+	attempts, err := retry.run(retry.constant(5 * time.Second, 2), scripted, &s, {clock = retry.fake_clock(&fc), breaker = &cb})
+	testing.expect_value(t, err, rerr(.Circuit_Open))
+	testing.expect_value(t, attempts, 2)
+}
+
+@(test)
 test_run_with_breaker_recovers_after_timeout :: proc(t: ^testing.T) {
 	fc: retry.Fake_Clock
 	cb: retry.Circuit_Breaker
