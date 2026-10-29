@@ -55,7 +55,7 @@ logfmt
 LSP
 macOS
 microui
-retry
+[Rr]etry
 npm
 ODIN_TEST_THREADS
 OLS
@@ -77,3 +77,6 @@ WebAssembly
 WebSocket(s)?
 Xcode
 XCTest
+[Bb]ackoff(s)?
+[Ii]njectable
+[Ss]eedable

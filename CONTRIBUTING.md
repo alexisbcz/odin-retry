@@ -20,17 +20,17 @@ All three must pass with zero errors.
 - Give every allocating procedure an `allocator := context.allocator` parameter and a matching destroy or delete procedure.
 - Return `(T, Error)` from fallible procedures. Don't panic in library code.
 - Write a doc comment for every exported declaration.
-- Add a test under `tests/` for every bug fix and every new procedure.
+- Add a test under `tests/` for every bug fix and every new procedure. Tests use `Fake_Clock` and seeded generators, so they never really sleep.
 
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). Write an imperative subject of 72 characters or fewer, a blank line, then a body of `-` bullet points that explain what changed and why:
 
 ```text
-fix: reject negative counts in repeat
+fix: saturate linear delays instead of overflowing
 
-- repeat used to allocate a huge buffer when count was negative
-- return Repeat_Error.Negative_Count before touching the allocator
+- a large increment wrapped time.Duration around to a negative delay
+- cap the sum at max, or at the largest duration when max is zero
 ```
 
 ## Changelog
