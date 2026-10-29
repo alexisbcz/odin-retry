@@ -28,6 +28,8 @@ Backoff :: struct {
 	stop:        Retry_Error,
 	start:       time.Duration,
 	base:        time.Duration,
+	// scaled is `base` before truncation to whole nanoseconds, so fractional multipliers keep growing.
+	scaled:      f64,
 	previous:    time.Duration,
 	initialized: bool,
 }
@@ -112,7 +114,7 @@ backoff_next :: proc(b: ^Backoff) -> (delay: time.Duration, ok: bool) {
 		}
 	}
 
-	b.base = grow(b.base, p.multiplier, p.increment, limit)
+	b.base, b.scaled = grow(b.base, b.scaled, p.multiplier, p.increment, limit)
 	b.attempt += 1
 	return delay, true
 }
@@ -133,6 +135,7 @@ backoff_reset :: proc(b: ^Backoff) {
 	if b.policy.max > 0 && b.base > b.policy.max {
 		b.base = b.policy.max
 	}
+	b.scaled = f64(b.base)
 	b.previous = b.policy.initial
 	b.start = clock_now(b.clock)
 }
@@ -152,24 +155,48 @@ reset :: proc {
 	backoff_reset,
 }
 
-// grow returns `base * multiplier + increment`, capped at `limit` without overflowing.
+/*
+grow returns `base * multiplier + increment`, capped at `limit` without
+overflowing, together with its unrounded value.
+
+A multiplier of 1 uses exact integer arithmetic. Any other multiplier works on
+`scaled`, the unrounded previous delay, so that truncating to whole
+nanoseconds neither stalls growth (1 ns * 1.5 is still 1 ns) nor compounds an
+error over many steps.
+*/
 @(private = "file")
-grow :: proc(base: time.Duration, multiplier: f64, increment: time.Duration, limit: time.Duration) -> time.Duration {
+grow :: proc(
+	base: time.Duration,
+	scaled: f64,
+	multiplier: f64,
+	increment: time.Duration,
+	limit: time.Duration,
+) -> (
+	next: time.Duration,
+	next_scaled: f64,
+) {
 	if base >= limit {
-		return limit
+		return limit, f64(limit)
 	}
-	scaled := f64(base) * multiplier
-	if scaled >= f64(limit) {
-		return limit
+	if multiplier == 1 {
+		if increment >= limit - base {
+			return limit, f64(limit)
+		}
+		next = base + increment
+		return next, f64(next)
 	}
-	next := time.Duration(scaled)
+	next_scaled = scaled * multiplier + f64(increment)
+	if next_scaled >= f64(limit) {
+		return limit, f64(limit)
+	}
+	next = time.Duration(next_scaled)
 	if next < base {
 		next = base
 	}
-	if increment >= limit - next {
-		return limit
+	if next > limit {
+		next = limit
 	}
-	return next + increment
+	return next, next_scaled
 }
 
 // random_between returns a uniform duration in `[lo, hi]`, both inclusive.
