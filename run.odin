@@ -30,6 +30,15 @@ Options :: struct {
 	rng:      rand.Generator,
 	// on_retry, when set, is called before each sleep with the same `user` pointer as the operation.
 	on_retry: On_Retry_Proc,
+	/*
+	breaker, when set, is asked before each attempt and told the outcome after
+	it. `.Retry` and an invalid decision count as failures; `.Success` and
+	`.Permanent` count as successes, because the dependency answered. The
+	breaker must outlive the call.
+	*/
+	breaker:  ^Circuit_Breaker,
+	// budget, when set, stops the run once it is spent and before any sleep that would spend it. It must outlive the call.
+	budget:   ^Budget,
 }
 
 /*
@@ -46,7 +55,8 @@ Returns:
 - attempts: how many times `op` ran.
 - err: `nil` on success. Otherwise a Policy_Error for an invalid policy, or a
   Retry_Error: `.Permanent_Failure`, `.Attempts_Exhausted`,
-  `.Elapsed_Exhausted`, `.Invalid_Decision` or `.Nil_Operation`.
+  `.Elapsed_Exhausted`, `.Circuit_Open`, `.Budget_Exhausted`,
+  `.Invalid_Decision` or `.Nil_Operation`.
 
 Example:
 	Counter :: struct {
@@ -67,11 +77,12 @@ run :: proc(policy: Policy, op: Operation, user: rawptr, options := Options{}) -
 	if op == nil {
 		return 0, .Nil_Operation
 	}
-	return run_loop(policy, op, user, options.clock, options.rng, options.on_retry)
+	return run_loop(policy, op, user, options.clock, options.rng, options.on_retry, options.breaker, options.budget)
 }
 
 /*
-run_typed is run with a typed user pointer, so `op` needs no cast.
+run_typed is run with a typed user pointer, so `op` needs no cast. The
+optional parameters match the fields of Options.
 
 Example:
 	Job :: struct {
@@ -93,6 +104,8 @@ run_typed :: proc(
 	on_retry: proc(user: ^T, attempt: int, delay: time.Duration) = nil,
 	clock: Clock = {},
 	rng: rand.Generator = {},
+	breaker: ^Circuit_Breaker = nil,
+	budget: ^Budget = nil,
 ) -> (
 	attempts: int,
 	err: Error,
@@ -100,7 +113,7 @@ run_typed :: proc(
 	if op == nil {
 		return 0, .Nil_Operation
 	}
-	return run_loop(policy, op, user, clock, rng, on_retry)
+	return run_loop(policy, op, user, clock, rng, on_retry, breaker, budget)
 }
 
 // run_loop holds the retry loop shared by run and run_typed.
@@ -112,6 +125,8 @@ run_loop :: proc(
 	clock: Clock,
 	rng: rand.Generator,
 	on_retry: $Cb,
+	breaker: ^Circuit_Breaker,
+	budget: ^Budget,
 ) -> (
 	attempts: int,
 	err: Error,
@@ -120,21 +135,47 @@ run_loop :: proc(
 	backoff_init(&b, policy, rng, clock) or_return
 
 	for {
+		if budget != nil && budget_expired(budget^) {
+			return attempts, .Budget_Exhausted
+		}
+		if breaker != nil && !breaker_allow(breaker) {
+			return attempts, .Circuit_Open
+		}
+
 		attempts += 1
 		decision := op(user, attempts)
 		switch decision {
 		case .Success:
+			if breaker != nil {
+				breaker_record_success(breaker)
+			}
 			return attempts, nil
 		case .Permanent:
+			if breaker != nil {
+				breaker_record_success(breaker)
+			}
 			return attempts, .Permanent_Failure
 		case .Retry:
+			if breaker != nil {
+				breaker_record_failure(breaker)
+				// Fail fast: sleeping only to be rejected would waste the delay.
+				if breaker_state(breaker) == .Open {
+					return attempts, .Circuit_Open
+				}
+			}
 		case:
+			if breaker != nil {
+				breaker_record_failure(breaker)
+			}
 			return attempts, .Invalid_Decision
 		}
 
 		delay, ok := backoff_next(&b)
 		if !ok {
 			return attempts, b.stop
+		}
+		if budget != nil && delay >= budget_remaining(budget^) {
+			return attempts, .Budget_Exhausted
 		}
 		if on_retry != nil {
 			on_retry(user, attempts, delay)
