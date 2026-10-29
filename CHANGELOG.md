@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
-- Fractional multipliers no longer stall or drift. `Backoff` grew each delay from the previous delay truncated to whole nanoseconds, so a 1 ns delay with multiplier 1.5 stayed at 1 ns forever and long sequences lost up to 1 ns per step. It now grows the unrounded delay.
+- Fractional multipliers no longer stall or drift. `Backoff` grew each delay from the previous delay truncated to whole nanoseconds, so a 1-nanosecond delay with multiplier 1.5 stayed at 1 nanosecond forever and long sequences lost up to a nanosecond per step. It now grows the unrounded delay.
 - The documented delay formula was wrong when both `multiplier` and `increment` are set. The docs now describe the real rule: each delay is the previous one times `multiplier`, plus `increment`.
 
 ### Changed
