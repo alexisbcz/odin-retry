@@ -1,4 +1,4 @@
-# CI for alexisbcz Odin libraries. Copy as-is; nothing here is library specific.
+# CI for alexisbcz Odin libraries. Copied from odin-standards; tests also fail on leaks.
 name: CI
 
 on:
@@ -43,7 +43,7 @@ jobs:
         run: odin check . -vet -strict-style -disallow-do -no-entry-point
 
       - name: Run tests
-        run: odin test tests -vet -strict-style -disallow-do -define:ODIN_TEST_THREADS=2
+        run: odin test tests -vet -strict-style -disallow-do -define:ODIN_TEST_THREADS=2 -define:ODIN_TEST_FAIL_ON_BAD_MEMORY=true
 
       - name: Build examples
         shell: bash
