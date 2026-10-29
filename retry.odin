@@ -6,6 +6,11 @@ the four jitter modes from the AWS Architecture Blog post "Exponential Backoff
 And Jitter" (none, full, equal and decorrelated), and the two usual limits: a
 maximum number of attempts and a maximum elapsed time.
 
+Around that core it adds the other usual resilience tools: classify and its
+siblings turn error values into retry decisions, a Circuit_Breaker fails fast
+while a dependency is down, and a Budget caps the total time of a request
+across attempts and nested calls.
+
 There are two ways to use it:
 
 - run (or run_typed) calls an operation, sleeps between failed attempts and
@@ -111,6 +116,10 @@ Retry_Error :: enum {
 	Elapsed_Exhausted,
 	// The operation returned a value outside the Retry_Decision enum.
 	Invalid_Decision,
+	// The circuit breaker in Options.breaker rejected the attempt.
+	Circuit_Open,
+	// The Budget in Options.budget ran out, or the next delay would have used it up.
+	Budget_Exhausted,
 }
 
 /*
@@ -121,6 +130,8 @@ success. Compare it against a variant, for example
 Error :: union #shared_nil {
 	Policy_Error,
 	Retry_Error,
+	Breaker_Error,
+	Budget_Error,
 }
 
 // DEFAULT_INITIAL is the first delay used by the exponential preset.
