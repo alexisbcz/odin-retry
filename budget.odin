@@ -81,6 +81,9 @@ budget_expired :: proc(b: Budget) -> bool {
 budget_timeout returns the timeout to give one attempt: `per_attempt`, cut
 down to what the budget has left. A `per_attempt` of 0 or less means "no
 timeout of its own", so the result is the remaining budget.
+
+A spent budget gives 0. Many APIs read a timeout of 0 as "no timeout", so
+check budget_expired first, or let run do it through Options.budget.
 */
 budget_timeout :: proc(b: Budget, per_attempt: time.Duration) -> time.Duration {
 	left := budget_remaining(b)

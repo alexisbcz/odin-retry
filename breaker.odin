@@ -97,6 +97,10 @@ Options.breaker.
 
 A Circuit_Breaker owns no memory. It holds a mutex, so you can share one value
 between threads, but you must not copy it after breaker_init.
+
+The breaker can't tell which call a result belongs to. When threads share it,
+a slow call allowed while closed may report back after the breaker has gone
+half-open, and its result then counts as a trial result.
 */
 Circuit_Breaker :: struct {
 	config:      Breaker_Config,

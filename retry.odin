@@ -57,7 +57,8 @@ Jitter :: enum {
 	/*
 	Decorrelated picks a delay uniformly in `[initial, previous * 3]`, capped at
 	`max`. It ignores `multiplier` and `increment`, because the growth comes from
-	the previous delay.
+	the previous delay. With `initial = 0` every delay is 0, as in the AWS
+	formula, so give it a positive `initial`.
 	*/
 	Decorrelated,
 }
@@ -65,8 +66,11 @@ Jitter :: enum {
 /*
 Policy describes when to retry and how long to wait between attempts.
 
-The computed delay before retry `n` (counting from 0) is
-`initial * multiplier^n + increment * n`, capped at `max`, and then jittered.
+The computed delay before the first retry is `initial`. Each later one is the
+previous computed delay times `multiplier`, plus `increment`, capped at `max`;
+the result is then jittered. With `increment = 0` this is
+`initial * multiplier^n` for retry `n` (counting from 0), and with
+`multiplier = 1` it is `initial + increment * n`.
 The presets constant, linear and exponential fill in a valid Policy; set
 further fields on the result as needed.
 

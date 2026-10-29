@@ -68,7 +68,7 @@ main :: proc() {
 
 ## Policies
 
-A `Policy` computes the delay before retry `n`, counting from 0, as `initial * multiplier^n + increment * n`. It caps that delay at `max` and then applies the jitter. A zero `max`, `max_attempts` or `max_elapsed` means no limit.
+A `Policy` waits `initial` before the first retry. Each later delay is the previous one times `multiplier`, plus `increment`. It caps that delay at `max` and then applies the jitter. With `increment = 0` the delay before retry `n`, counting from 0, is `initial * multiplier^n`, and with `multiplier = 1` it is `initial + increment * n`. A zero `max`, `max_attempts` or `max_elapsed` means no limit.
 
 | Preset | Delays without jitter | Default jitter |
 | --- | --- | --- |
@@ -84,6 +84,8 @@ The jitter modes follow the AWS Architecture Blog post "Exponential Backoff And 
 | `.Full` | uniform in `[0, d]` |
 | `.Equal` | uniform in `[d/2, d]` |
 | `.Decorrelated` | uniform in `[initial, previous * 3]`, capped at `max` |
+
+`.Decorrelated` needs a positive `initial`: with `initial = 0` every delay is 0.
 
 `max_attempts` counts every attempt, the first one included. `max_elapsed` stops before a delay that would end after that much time since the start, so a run never sleeps past its deadline.
 
@@ -207,8 +209,8 @@ attempts, err := retry.run(policy, op, user, {
 | `backoff_next(b)` | Return `(delay, ok)` for the next retry | No | Not needed |
 | `backoff_reset(b)` | Start the sequence and the elapsed window over | No | Not needed |
 | `run(policy, op, user, options)` | Retry an `Operation` with a `rawptr` user value | No | Not needed |
-| `run_typed(policy, op, user, on_retry, clock, rng)` | Retry with a typed user pointer | No | Not needed |
-| `Options` | Clock, generator and `on_retry` callback for `run` | No | Not needed |
+| `run_typed(policy, op, user, on_retry, clock, rng, breaker, budget)` | Retry with a typed user pointer | No | Not needed |
+| `Options` | Clock, generator, `on_retry` callback, breaker and budget for `run` | No | Not needed |
 | `Clock`, `system_clock`, `clock_now`, `clock_sleep` | Injectable time source | No | Not needed |
 | `Fake_Clock`, `fake_clock`, `fake_clock_advance` | Clock for tests that never blocks | No | Not needed |
 | `classify`, `classify_except`, `classify_proc` | Map an error value to a `Retry_Decision` | No | Not needed |
