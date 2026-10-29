@@ -6,7 +6,7 @@ import "core:time"
 // DECORRELATED_FACTOR is the growth bound of `.Decorrelated` jitter: each delay is at most this many times the previous one.
 DECORRELATED_FACTOR :: 3
 
-@(private = "file")
+@(private)
 MAX_DURATION :: time.Duration(max(i64))
 
 /*
